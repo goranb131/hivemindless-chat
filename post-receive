@@ -1,0 +1,108 @@
+#!/bin/sh
+echo "Running post-receive hook (with modernized menu styling)" >> /tmp/post-receive.log
+GIT_WORK_TREE=/home/blackdiamond/ithas/docs git checkout -f main >> /tmp/post-receive.log 2>&1
+
+cd /home/blackdiamond/ithas/docs
+
+# Log the current directory
+echo "Current directory: $(pwd)" >> /tmp/post-receive.log
+
+# Manually construct the menu in HTML
+menu_content='
+<h3>Guides</h3>
+<ul>
+<li><a href="#">Computer</a>
+        <ul>
+           <li><a href="/md-docs/guides/Computer/programming-c.html">Programming</a>
+            <li><a href="/md-docs/guides/Computer/network.html">Network and Security</a></li>
+        </ul>
+    <li><a href="/md-docs/guides/Swift.html">Swift</a></li>
+<li><a href="/md-docs/guides/swiftui-vs-react.html">SwiftUI vs React</a></li
+>
+       <li><a href="/md-docs/guides/Web/web.html">Web</a>      
+        <ul>
+           <li><a href="/md-docs/guides/Web/javascript.html">Javascript</a>
+            <li><a href="/md-docs/guides/Web/react.html">React</a></li>
+            <li><a href="/md-docs/guides/Web/typescript.html">Typescript</a></li>
+        </ul>
+    </li>
+<li><a href="/md-docs/guides/UNIX/unix.html">UNIX</a>
+    </li>
+<li><a href="/md-docs/guides/Graphics-programming/Metal.html">Graphics Programming - Metal</a></li>
+</ul>
+<h3>Docs</h3>
+<h4>BeeSQL</h4>
+<ul>
+    <li><a href="/md-docs/docs/beesql/DS1.html">BeeSQL</a></li>
+</ul>
+<h4>ITHAS</h4>
+<ul>
+<li><a href="/md-docs/docs/ithas/infrastructure/plan9.html">Plan9</a></li>
+<li><a href="/md-docs/docs/ithas/infrastructure/freebsd-server.html">FreeBSD Server</a></li>
+    <li><a href="/md-docs/docs/ithas/weightlifting-club/weightlifting-club.html">Weightlifting Club</a></li>
+    <li><a href="/md-docs/docs/ithas/durer-algorithm/durer-algorithm-swiftui.html">Durer Algorithm - SwiftUI</a></li>
+<li><a href="/md-docs/docs/ithas/prismaFS/prismafs.html">prismaFS</a></li> 
+</ul>
+
+'
+# Find all Markdown files and process their corresponding HTML files
+find . -name "*.md" | while read file; do
+    echo "Processing $file" >> /tmp/post-receive.log
+
+    # Determine the corresponding HTML file path
+    html_file="${file%.md}.html"
+
+    # Truncate the HTML file (clear it completely)
+    : > "$html_file"
+    echo "Truncated $html_file" >> /tmp/post-receive.log
+
+    # Add content back to the HTML file (CSS, and manually constructed fixed menu)
+    {
+        echo "<!-- Debug: Dummy Line Added for Testing -->"
+        echo '<!DOCTYPE html>'
+        echo '<html>'
+        echo '<head>'
+        echo '<link rel="stylesheet" href="/md-docs/style.css">'
+        echo '<style>'
+        
+        # Modern menu styles
+    echo '.menu { position: fixed; top: 0; left: 0; width: 20%; height: 100vh; background-color: #f7f7f7; padding: 20px; font-family: Arial, sans-serif; box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1); overflow-y: auto; }'
+    echo '.menu h2, .menu h3, .menu h4 { color: #333; margin-top: 10px; margin-bottom: 5px; }'
+    
+    # Reduce font size and spacing in the menu
+    echo '.menu ul { list-style-type: none; padding-left: 10px; }'
+    
+    # Reduce margin between the list items
+    echo '.menu ul li { margin: 5px 0; }' # Reduced from 10px to 5px
+    
+    # Make the text smaller and reduce padding inside the links
+    echo '.menu a { text-decoration: none; color: #007bff; padding: 3px; display: block; border-radius: 4px; font-size: 14px; }' # Reduced padding and font size
+    echo '.menu a:hover { background-color: #e7f0ff; }'
+ 
+        # Content container and layout
+        echo '.content { margin-left: 22%; padding: 20px; font-family: Arial, sans-serif; line-height: 1.6; }'
+        echo '</style>'
+        echo '</head>'
+        echo '<body>'
+        echo '<div class="container">'
+        
+        # Add the manually constructed menu on the left for every file
+        echo '<div class="menu">'
+        echo "$menu_content"
+        echo '</div>'
+        echo "Menu added to $html_file" >> /tmp/post-receive.log
+
+        # Add Markdown-generated content on the right
+        echo '<div class="content">'
+        cat "$file" | multimarkdown
+        echo '</div>'
+        
+        echo '</div>' # Close container div
+        echo '</body>'
+        echo '</html>'
+    } >> "$html_file"
+
+    echo "Successfully generated $html_file" >> /tmp/post-receive.log
+done
+
+echo "Post-receive hook completed (with modernized menu styling)" >> /tmp/post-receive.log
