@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
+#include <fcntl.h>
 
 #define PORT 12345
 #define BUF_SIZE 1024
@@ -18,7 +20,6 @@
 #define YELLOW "\033[33m"
 #define RESET "\033[0m"
 
-// Global variables
 char current_input[BUF_SIZE] = "";         // Save server user's current input
 char server_nickname[BUF_SIZE] = "Server"; // Server nickname
 pthread_mutex_t input_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for thread-safe input handling
@@ -26,6 +27,24 @@ pthread_mutex_t input_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for thread-saf
 void error_exit(const char *message) {
     perror(message);
     exit(EXIT_FAILURE);
+}
+
+// Function to set terminal to raw mode
+struct termios orig_termios;
+
+void disable_raw_mode() {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+}
+
+void enable_raw_mode() {
+    struct termios raw;
+
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    atexit(disable_raw_mode);
+
+    raw = orig_termios;
+    raw.c_lflag &= ~(ICANON | ECHO); // Disable canonical mode and echo
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
 // Thread function for receiving messages
@@ -39,7 +58,7 @@ void *receive_messages(void *arg) {
         if (bytes_read <= 0) {
             printf(RED "\nClient disconnected.\n" RESET);
             close(client_fd);
-            exit(0); // Exit the program since the client is disconnected
+            exit(0);
         }
 
         pthread_mutex_lock(&input_mutex);
@@ -129,48 +148,67 @@ int main() {
         error_exit("Failed to create thread for receiving messages");
     }
 
+    // Enable raw mode for character-by-character input
+    enable_raw_mode();
+
     // Main thread handles sending messages
-    char input_buffer[BUF_SIZE];
+    char ch;
+    int index = 0;
+
+    printf(GREEN "You: " RESET);
+    fflush(stdout);
+
     while (1) {
-        // Print prompt
-        pthread_mutex_lock(&input_mutex);
-        printf(GREEN "You: " RESET);
-        fflush(stdout);
-        pthread_mutex_unlock(&input_mutex);
+        ch = getchar();
 
-        // Read user input
-        memset(input_buffer, 0, BUF_SIZE);
-        if (fgets(input_buffer, BUF_SIZE, stdin) == NULL) {
-            // Handle Ctrl+D or EOF gracefully
-            printf(RED "\nServer shutting down.\n" RESET);
-            close(client_fd);
-            close(server_fd);
-            exit(0);
+        pthread_mutex_lock(&input_mutex);
+
+        if (ch == '\n') {
+            // User pressed Enter, send the message
+            current_input[index] = '\0';
+
+            // Prepare the message with nickname
+            char message_with_nick[BUF_SIZE];
+            snprintf(message_with_nick, BUF_SIZE, "[%s]: %s", server_nickname, current_input);
+
+            // Send the message
+            if (write(client_fd, message_with_nick, strlen(message_with_nick)) == -1) {
+                error_exit(RED "Send failed" RESET);
+            }
+
+            // Clear current_input
+            index = 0;
+            current_input[0] = '\0';
+
+            // Print a new prompt
+            printf("\n" GREEN "You: " RESET);
+            fflush(stdout);
+        } else if (ch == 127 || ch == '\b') {
+            // Handle backspace
+            if (index > 0) {
+                index--;
+                current_input[index] = '\0';
+
+                // Move cursor back, overwrite character with space, and move cursor back again
+                printf("\b \b");
+                fflush(stdout);
+            }
+        } else {
+            // Add character to current_input
+            if (index < BUF_SIZE - 1) {
+                current_input[index++] = ch;
+                current_input[index] = '\0';
+
+                // Echo the character
+                putchar(ch);
+                fflush(stdout);
+            }
         }
 
-        // Remove trailing newline
-        input_buffer[strcspn(input_buffer, "\n")] = '\0';
-
-        // Update current_input under mutex
-        pthread_mutex_lock(&input_mutex);
-        strncpy(current_input, input_buffer, BUF_SIZE);
-        pthread_mutex_unlock(&input_mutex);
-
-        // Prepare the message with nickname
-        char message_with_nick[BUF_SIZE];
-        snprintf(message_with_nick, BUF_SIZE, "[%s]: %s", server_nickname, input_buffer);
-
-        // Send the message
-        if (write(client_fd, message_with_nick, strlen(message_with_nick)) == -1) {
-            error_exit(RED "Send failed" RESET);
-        }
-
-        // Clear current_input after sending
-        pthread_mutex_lock(&input_mutex);
-        current_input[0] = '\0';
         pthread_mutex_unlock(&input_mutex);
     }
 
+    disable_raw_mode();
     close(client_fd);
     close(server_fd);
     return 0;
