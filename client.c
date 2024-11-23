@@ -120,6 +120,11 @@ int main() {
     }
     printf(GREEN "Connected to server.\n" RESET);
 
+    // Send client nickname to server
+    if(write(sock_fd, client_nickname, strlen(client_nickname)) <= 0){
+        error_exit(RED "Failed to send nickname to server" RESET);
+    }
+
     // Read server welcome message
     memset(buffer, 0, BUF_SIZE);
     read(sock_fd, buffer, BUF_SIZE - 1);

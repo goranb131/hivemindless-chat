@@ -9,10 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
-#include <fcntl.h>
 
 #define PORT 12345
 #define BUF_SIZE 1024
+#define MAX_CLIENTS 100
 
 // ANSI color codes
 #define RED "\033[31m"
@@ -20,9 +20,21 @@
 #define YELLOW "\033[33m"
 #define RESET "\033[0m"
 
-char current_input[BUF_SIZE] = "";         // Save server user's current input
+// Structure to hold client information
+typedef struct {
+    int sock_fd;
+    struct sockaddr_in addr;
+    pthread_t thread;
+    char nickname[BUF_SIZE];
+} client_t;
+
+// Global variables
+char current_input[BUF_SIZE] = "";         // Server's current input
 char server_nickname[BUF_SIZE] = "Server"; // Server nickname
-pthread_mutex_t input_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for thread-safe input handling
+pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for clients array
+pthread_mutex_t input_mutex = PTHREAD_MUTEX_INITIALIZER;   // Mutex for input handling
+client_t *clients[MAX_CLIENTS];                            // Array of client pointers
+int server_fd;                                             // Server socket file descriptor
 
 void error_exit(const char *message) {
     perror(message);
@@ -47,43 +59,149 @@ void enable_raw_mode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-// Thread function for receiving messages
-void *receive_messages(void *arg) {
-    int client_fd = *(int *)arg;
+// Add client to clients array
+void add_client(client_t *cl) {
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (!clients[i]) {
+            clients[i] = cl;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&clients_mutex);
+}
+
+// Remove client from clients array
+void remove_client(int sock_fd) {
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (clients[i]) {
+            if (clients[i]->sock_fd == sock_fd) {
+                clients[i] = NULL;
+                break;
+            }
+        }
+    }
+    pthread_mutex_unlock(&clients_mutex);
+}
+
+// Broadcast message to all clients
+void broadcast_message(char *message, int exclude_fd) {
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (clients[i]) {
+            if (clients[i]->sock_fd != exclude_fd) {
+                if (write(clients[i]->sock_fd, message, strlen(message)) == -1) {
+                    perror("Broadcast failed");
+                }
+            }
+        }
+    }
+    pthread_mutex_unlock(&clients_mutex);
+}
+
+// Thread function for handling client communication
+void *handle_client(void *arg) {
+    client_t *cli = (client_t *)arg;
     char buffer[BUF_SIZE];
+
+    // Send welcome message to the client
+    char welcome_message[BUF_SIZE];
+    snprintf(welcome_message, BUF_SIZE, "Welcome to the server, %s!", cli->nickname);
+    if (write(cli->sock_fd, welcome_message, strlen(welcome_message)) <= 0) {
+        perror("Failed to send welcome message");
+    }
+
+    // Notify others about new client
+    char join_message[BUF_SIZE];
+    snprintf(join_message, BUF_SIZE, YELLOW "%s has joined the chat.\n" RESET, cli->nickname);
+    printf("%s", join_message);
+    broadcast_message(join_message, cli->sock_fd);
 
     while (1) {
         memset(buffer, 0, BUF_SIZE);
-        ssize_t bytes_read = read(client_fd, buffer, BUF_SIZE - 1);
+        ssize_t bytes_read = read(cli->sock_fd, buffer, BUF_SIZE - 1);
         if (bytes_read <= 0) {
-            printf(RED "\nClient disconnected.\n" RESET);
-            close(client_fd);
-            exit(0);
+            // Client disconnected
+            printf(RED "\n%s has disconnected.\n" RESET, cli->nickname);
+            // Notify others
+            char leave_message[BUF_SIZE];
+            snprintf(leave_message, BUF_SIZE, YELLOW "%s has left the chat.\n" RESET, cli->nickname);
+            broadcast_message(leave_message, cli->sock_fd);
+            close(cli->sock_fd);
+            remove_client(cli->sock_fd);
+            free(cli);
+            break;
         }
 
-        pthread_mutex_lock(&input_mutex);
+        // Broadcast the message to other clients
+        broadcast_message(buffer, cli->sock_fd);
 
+        // Also print the message on the server console
+        pthread_mutex_lock(&input_mutex);
         // Clear the current line
-        printf("\33[2K\r"); // ANSI code to clear the line
+        printf("\33[2K\r");
         fflush(stdout);
 
-        // Print the received message
         printf("%s\n", buffer);
 
         // Reprint the prompt and current input
         printf(GREEN "You: %s" RESET, current_input);
         fflush(stdout);
-
         pthread_mutex_unlock(&input_mutex);
+    }
+
+    pthread_detach(pthread_self());
+    return NULL;
+}
+
+// Function to accept new clients
+void *accept_clients(void *arg) {
+    while (1) {
+        struct sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+        if (client_fd == -1) {
+            perror("Accept failed");
+            continue;
+        }
+
+        // Receive client's nickname
+        char nickname[BUF_SIZE];
+        memset(nickname, 0, BUF_SIZE);
+        if (read(client_fd, nickname, BUF_SIZE - 1) <= 0) {
+            perror("Failed to get client's nickname");
+            close(client_fd);
+            continue;
+        }
+
+        // Create client structure
+        client_t *cli = (client_t *)malloc(sizeof(client_t));
+        cli->addr = client_addr;
+        cli->sock_fd = client_fd;
+        strncpy(cli->nickname, nickname, BUF_SIZE);
+
+        // Add client to the list
+        add_client(cli);
+
+        // Create a thread for the client
+        if (pthread_create(&cli->thread, NULL, handle_client, (void *)cli) != 0) {
+            perror("Failed to create thread for client");
+            close(client_fd);
+            remove_client(client_fd);
+            free(cli);
+            continue;
+        }
     }
     return NULL;
 }
 
 int main() {
-    int server_fd, client_fd;
-    struct sockaddr_in server_addr, client_addr;
-    socklen_t addr_len = sizeof(client_addr);
-    char welcome_message[BUF_SIZE] = "Welcome to the server!";
+    struct sockaddr_in server_addr;
+    char buffer[BUF_SIZE];
+
+    // Initialize clients array
+    memset(clients, 0, sizeof(clients));
 
     // Display header message
     printf(YELLOW "Collaborate, Think Free. No Bloat. Just Talk >_\n" RESET);
@@ -94,14 +212,6 @@ int main() {
     server_nickname[strcspn(server_nickname, "\n")] = '\0'; // Remove trailing newline
     if (strlen(server_nickname) == 0) {
         strcpy(server_nickname, "Server");
-    }
-
-    // Prompt for optional welcome message
-    printf(GREEN "Enter a welcome message for clients (optional): " RESET);
-    fgets(welcome_message, BUF_SIZE, stdin);
-    welcome_message[strcspn(welcome_message, "\n")] = '\0'; // Remove trailing newline
-    if (strlen(welcome_message) == 0) {
-        strcpy(welcome_message, "Welcome to the server!");
     }
 
     // Create socket
@@ -126,32 +236,21 @@ int main() {
     }
 
     // Listen for connections
-    if (listen(server_fd, 1) == -1) {
+    if (listen(server_fd, 10) == -1) {
         error_exit("Listen failed");
     }
     printf(GREEN "Server listening on port %d...\n" RESET, PORT);
 
-    // Accept a client connection
-    if ((client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &addr_len)) == -1) {
-        error_exit("Accept failed");
-    }
-    printf(GREEN "Client connected!\n" RESET);
-
-    // Send welcome message to client
-    if (write(client_fd, welcome_message, strlen(welcome_message)) <= 0) {
-        error_exit("Failed to send welcome message");
-    }
-
-    // Create a thread to handle receiving messages
-    pthread_t recv_thread;
-    if (pthread_create(&recv_thread, NULL, receive_messages, &client_fd) != 0) {
-        error_exit("Failed to create thread for receiving messages");
-    }
-
     // Enable raw mode for character-by-character input
     enable_raw_mode();
 
-    // Main thread handles sending messages
+    // Create a thread to accept new clients
+    pthread_t accept_thread;
+    if (pthread_create(&accept_thread, NULL, accept_clients, NULL) != 0) {
+        error_exit("Failed to create accept thread");
+    }
+
+    // Main thread handles server's own input
     char ch;
     int index = 0;
 
@@ -167,21 +266,35 @@ int main() {
             // User pressed Enter, send the message
             current_input[index] = '\0';
 
+            if (strlen(current_input) == 0) {
+                // Empty input, just print a new prompt
+                printf("\n" GREEN "You: " RESET);
+                fflush(stdout);
+                index = 0;
+                pthread_mutex_unlock(&input_mutex);
+                continue;
+            }
+
             // Prepare the message with nickname
             char message_with_nick[BUF_SIZE];
             snprintf(message_with_nick, BUF_SIZE, "[%s]: %s", server_nickname, current_input);
 
-            // Send the message
-            if (write(client_fd, message_with_nick, strlen(message_with_nick)) == -1) {
-                error_exit(RED "Send failed" RESET);
-            }
+            // Broadcast the message to all clients
+            broadcast_message(message_with_nick, -1); // -1 indicates server message
+
+            // Also print the message on the server console
+            // Clear the current line
+            printf("\33[2K\r");
+            fflush(stdout);
+
+            printf("%s\n", message_with_nick);
 
             // Clear current_input
             index = 0;
             current_input[0] = '\0';
 
             // Print a new prompt
-            printf("\n" GREEN "You: " RESET);
+            printf(GREEN "You: " RESET);
             fflush(stdout);
         } else if (ch == 127 || ch == '\b') {
             // Handle backspace
@@ -209,7 +322,6 @@ int main() {
     }
 
     disable_raw_mode();
-    close(client_fd);
     close(server_fd);
     return 0;
 }
