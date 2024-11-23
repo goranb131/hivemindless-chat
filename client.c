@@ -93,6 +93,7 @@ int main() {
     server_ip[strcspn(server_ip, "\n")] = '\0'; // Remove trailing newline
 
     // Prompt for client nickname
+    get_nickname:
     printf(GREEN "Enter your nickname (default is 'Client'): " RESET);
     fgets(client_nickname, BUF_SIZE, stdin);
     client_nickname[strcspn(client_nickname, "\n")] = '\0'; // Remove trailing newline
@@ -120,15 +121,37 @@ int main() {
     }
     printf(GREEN "Connected to server.\n" RESET);
 
-    // Send client nickname to server
-    if(write(sock_fd, client_nickname, strlen(client_nickname)) <= 0){
-        error_exit(RED "Failed to send nickname to server" RESET);
-    }
+    // Send client nickname to server and handle nickname validation
+    while (1) {
+        // Send nickname to server
+        if (write(sock_fd, client_nickname, strlen(client_nickname)) <= 0) {
+            error_exit(RED "Failed to send nickname to server" RESET);
+        }
 
-    // Read server welcome message
-    memset(buffer, 0, BUF_SIZE);
-    read(sock_fd, buffer, BUF_SIZE - 1);
-    printf(YELLOW "%s\n" RESET, buffer);
+        // Read server response
+        memset(buffer, 0, BUF_SIZE);
+        ssize_t bytes_read = read(sock_fd, buffer, BUF_SIZE - 1);
+        if (bytes_read <= 0) {
+            error_exit(RED "Server disconnected during nickname validation" RESET);
+        }
+
+        buffer[bytes_read] = '\0';
+
+        if (strncmp(buffer, "Nickname taken", 14) == 0) {
+            // Nickname is taken, prompt for a new one
+            printf(RED "%s\n" RESET, buffer);
+            printf(GREEN "%s" RESET, buffer); // The server message includes the prompt
+            fgets(client_nickname, BUF_SIZE, stdin);
+            client_nickname[strcspn(client_nickname, "\n")] = '\0'; // Remove trailing newline
+            if (strlen(client_nickname) == 0) {
+                strcpy(client_nickname, "Client"); // Default nickname
+            }
+        } else {
+            // Welcome message received, nickname accepted
+            printf(YELLOW "%s\n" RESET, buffer);
+            break;
+        }
+    }
 
     // Create a thread to handle receiving messages
     pthread_t recv_thread;
@@ -152,6 +175,15 @@ int main() {
         if (ch == '\n') {
             // User pressed Enter, send the message
             current_input[index] = '\0';
+
+            if (strlen(current_input) == 0) {
+                // Empty input, just print a new prompt
+                printf("\n" GREEN "You: " RESET);
+                fflush(stdout);
+                index = 0;
+                pthread_mutex_unlock(&input_mutex);
+                continue;
+            }
 
             // Prepare the message with nickname
             char message_with_nick[BUF_SIZE];

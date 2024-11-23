@@ -85,6 +85,22 @@ void remove_client(int sock_fd) {
     pthread_mutex_unlock(&clients_mutex);
 }
 
+// Check if a nickname is already taken
+int is_nickname_taken(const char *nickname) {
+    int taken = 0;
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (clients[i]) {
+            if (strcmp(clients[i]->nickname, nickname) == 0) {
+                taken = 1;
+                break;
+            }
+        }
+    }
+    pthread_mutex_unlock(&clients_mutex);
+    return taken;
+}
+
 // Broadcast message to all clients
 void broadcast_message(char *message, int exclude_fd) {
     pthread_mutex_lock(&clients_mutex);
@@ -104,13 +120,6 @@ void broadcast_message(char *message, int exclude_fd) {
 void *handle_client(void *arg) {
     client_t *cli = (client_t *)arg;
     char buffer[BUF_SIZE];
-
-    // Send welcome message to the client
-    char welcome_message[BUF_SIZE];
-    snprintf(welcome_message, BUF_SIZE, "Welcome to the server, %s!", cli->nickname);
-    if (write(cli->sock_fd, welcome_message, strlen(welcome_message)) <= 0) {
-        perror("Failed to send welcome message");
-    }
 
     // Notify others about new client
     char join_message[BUF_SIZE];
@@ -166,13 +175,33 @@ void *accept_clients(void *arg) {
             continue;
         }
 
-        // Receive client's nickname
+        // Handle nickname assignment
         char nickname[BUF_SIZE];
-        memset(nickname, 0, BUF_SIZE);
-        if (read(client_fd, nickname, BUF_SIZE - 1) <= 0) {
-            perror("Failed to get client's nickname");
-            close(client_fd);
-            continue;
+        while (1) {
+            memset(nickname, 0, BUF_SIZE);
+            // Receive client's nickname
+            if (read(client_fd, nickname, BUF_SIZE - 1) <= 0) {
+                perror("Failed to get client's nickname");
+                close(client_fd);
+                goto cleanup;
+            }
+
+            // Remove trailing newline
+            nickname[strcspn(nickname, "\n")] = '\0';
+
+            // Check if nickname is taken
+            if (is_nickname_taken(nickname)) {
+                // Send a message to client that nickname is taken
+                char msg[BUF_SIZE] = "Nickname taken. Please enter a different nickname: ";
+                if (write(client_fd, msg, strlen(msg)) <= 0) {
+                    perror("Failed to send nickname rejection");
+                    close(client_fd);
+                    goto cleanup;
+                }
+            } else {
+                // Nickname is unique, break out of loop
+                break;
+            }
         }
 
         // Create client structure
@@ -184,6 +213,13 @@ void *accept_clients(void *arg) {
         // Add client to the list
         add_client(cli);
 
+        // Send welcome message to the client
+        char welcome_message[BUF_SIZE];
+        snprintf(welcome_message, BUF_SIZE, "Welcome to the server, %s!", cli->nickname);
+        if (write(cli->sock_fd, welcome_message, strlen(welcome_message)) <= 0) {
+            perror("Failed to send welcome message");
+        }
+
         // Create a thread for the client
         if (pthread_create(&cli->thread, NULL, handle_client, (void *)cli) != 0) {
             perror("Failed to create thread for client");
@@ -192,6 +228,12 @@ void *accept_clients(void *arg) {
             free(cli);
             continue;
         }
+
+        continue;
+
+    cleanup:
+        close(client_fd);
+        continue;
     }
     return NULL;
 }
