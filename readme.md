@@ -1,4 +1,5 @@
 compile client on client connecting to server:
+
 clang -D_POSIX_C_SOURCE=200809L -o chat_client client.c -lpthread
 
 
@@ -7,9 +8,9 @@ compile server where chat is served from and server user:
 clang -o chat_server server.c -lpthread
 
 
-TalkFree Chat: No Bloat. Just Talk.
+HiveMindless chat: No Bloat. Just Talk.
 
-TalkFree is a minimalist terminal-based chat application built in C, designed to run on UNIX systems like FreeBSD, macOS, and Illumos. It focuses on simplicity, privacy, and efficiency, avoiding the unnecessary complexity of modern bloated communication tools.
+TalkFree is a minimalist terminal-based chat application built in C, designed to run on UNIX systems like FreeBSD, macOS, and Illumos. It is an anti-bloat statement.
 
 Features
 

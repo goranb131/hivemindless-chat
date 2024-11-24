@@ -19,16 +19,16 @@
 #define YELLOW "\033[33m"
 #define RESET "\033[0m"
 
-char current_input[BUF_SIZE] = "";         // Save user's current input
-char client_nickname[BUF_SIZE] = "Client"; // Client's nickname
-pthread_mutex_t input_mutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for thread-safe input handling
+char current_input[BUF_SIZE] = "";         // save user current input
+char client_nickname[BUF_SIZE] = "Client"; // nickname
+pthread_mutex_t input_mutex = PTHREAD_MUTEX_INITIALIZER; // mutex for thread safe input handling
 
 void error_exit(const char *message) {
     perror(message);
     exit(EXIT_FAILURE);
 }
 
-// Function to set terminal to raw mode
+// function to set terminal to raw mode
 struct termios orig_termios;
 
 void disable_raw_mode() {
@@ -42,11 +42,11 @@ void enable_raw_mode() {
     atexit(disable_raw_mode);
 
     raw = orig_termios;
-    raw.c_lflag &= ~(ICANON | ECHO); // Disable canonical mode and echo
+    raw.c_lflag &= ~(ICANON | ECHO); // disable canonical mode and echo
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-// Thread function for receiving messages
+// thread function for receiving messages
 void *receive_messages(void *arg) {
     int sock_fd = *(int *)arg;
     char buffer[BUF_SIZE];
@@ -62,14 +62,14 @@ void *receive_messages(void *arg) {
 
         pthread_mutex_lock(&input_mutex);
 
-        // Clear the current line
+        // clear current line
         printf("\33[2K\r"); // ANSI code to clear the line
         fflush(stdout);
 
-        // Print the received message
+        // print out received message
         printf("%s\n", buffer);
 
-        // Reprint the prompt and current input
+        // print prompt again and current input that was retained
         printf(GREEN "You: %s" RESET, current_input);
         fflush(stdout);
 
@@ -84,29 +84,29 @@ int main() {
     char server_ip[BUF_SIZE];
     char buffer[BUF_SIZE];
 
-    // Display header message
+    // header message
     printf(YELLOW "Collaborate, Think Free. No Bloat. Just Talk >_\n" RESET);
 
-    // Prompt for server IP address
+    // ask server IP address
     printf(GREEN "Enter server IP address: " RESET);
     fgets(server_ip, BUF_SIZE, stdin);
-    server_ip[strcspn(server_ip, "\n")] = '\0'; // Remove trailing newline
+    server_ip[strcspn(server_ip, "\n")] = '\0'; // remove trailing newline
 
-    // Prompt for client nickname
+    // prompt client nickname
     get_nickname:
     printf(GREEN "Enter your nickname (default is 'Client'): " RESET);
     fgets(client_nickname, BUF_SIZE, stdin);
-    client_nickname[strcspn(client_nickname, "\n")] = '\0'; // Remove trailing newline
+    client_nickname[strcspn(client_nickname, "\n")] = '\0'; // remove trailing newline
     if (strlen(client_nickname) == 0) {
-        strcpy(client_nickname, "Client"); // Default nickname
+        strcpy(client_nickname, "Client"); // default nick
     }
 
-    // Create socket
+    // yeah lets create socket
     if ((sock_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
         error_exit(RED "Socket creation failed" RESET);
     }
 
-    // Define server address
+    // define server address
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(12345);
@@ -114,21 +114,21 @@ int main() {
         error_exit(RED "Invalid address or address not supported" RESET);
     }
 
-    // Connect to server
+    // connect to server
     printf(GREEN "Connecting to %s...\n" RESET, server_ip);
     if (connect(sock_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
         error_exit(RED "Connection failed" RESET);
     }
-    printf(GREEN "Connected to server.\n" RESET);
+    printf(GREEN "Connected to server.\n" RESET); // hell yes
 
-    // Send client nickname to server and handle nickname validation
+    // send client nickname to server and nickname validate
     while (1) {
-        // Send nickname to server
+        // send nickname to server
         if (write(sock_fd, client_nickname, strlen(client_nickname)) <= 0) {
             error_exit(RED "Failed to send nickname to server" RESET);
         }
 
-        // Read server response
+        // read server response
         memset(buffer, 0, BUF_SIZE);
         ssize_t bytes_read = read(sock_fd, buffer, BUF_SIZE - 1);
         if (bytes_read <= 0) {
@@ -138,29 +138,29 @@ int main() {
         buffer[bytes_read] = '\0';
 
         if (strncmp(buffer, "Nickname taken", 14) == 0) {
-            // Nickname is taken, prompt for a new one
+            // nickname taken, prompt for new one
             printf(RED "%s\n" RESET, buffer);
-            printf(GREEN "%s" RESET, buffer); // The server message includes the prompt
+            printf(GREEN "%s" RESET, buffer); // server message includes the prompt
             fgets(client_nickname, BUF_SIZE, stdin);
-            client_nickname[strcspn(client_nickname, "\n")] = '\0'; // Remove trailing newline
+            client_nickname[strcspn(client_nickname, "\n")] = '\0'; // remove trailing newline
             if (strlen(client_nickname) == 0) {
-                strcpy(client_nickname, "Client"); // Default nickname
+                strcpy(client_nickname, "Client"); // default nickname
             }
         } else {
-            // Welcome message received, nickname accepted
+            // welcome message received, nickname accepted
             printf(YELLOW "%s\n" RESET, buffer);
             break;
         }
     }
 
-    // Create a thread to handle receiving messages
+    // create the thread to deal with receiving messages
     pthread_t recv_thread;
     pthread_create(&recv_thread, NULL, receive_messages, &sock_fd);
 
-    // Enable raw mode for character-by-character input
+    // enable raw mode for character after character input
     enable_raw_mode();
 
-    // Main thread handles sending messages
+    // main thread deals with sending messages
     char ch;
     int index = 0;
 
@@ -173,11 +173,11 @@ int main() {
         pthread_mutex_lock(&input_mutex);
 
         if (ch == '\n') {
-            // User pressed Enter, send the message
+            // user pressed Enter, send message
             current_input[index] = '\0';
 
             if (strlen(current_input) == 0) {
-                // Empty input, just print a new prompt
+                // empty input - just print a new prompt
                 printf("\n" GREEN "You: " RESET);
                 fflush(stdout);
                 index = 0;
@@ -185,39 +185,39 @@ int main() {
                 continue;
             }
 
-            // Prepare the message with nickname
+            // prepare the message with nickname
             char message_with_nick[BUF_SIZE];
             snprintf(message_with_nick, BUF_SIZE, "[%s]: %s", client_nickname, current_input);
 
-            // Send the message
+            // send message
             if (write(sock_fd, message_with_nick, strlen(message_with_nick)) == -1) {
                 error_exit(RED "Send failed" RESET);
             }
 
-            // Clear current_input
+            // clear current_input
             index = 0;
             current_input[0] = '\0';
 
-            // Print a new prompt
+            // print new prompt
             printf("\n" GREEN "You: " RESET);
             fflush(stdout);
         } else if (ch == 127 || ch == '\b') {
-            // Handle backspace
+            // backspace
             if (index > 0) {
                 index--;
                 current_input[index] = '\0';
 
-                // Move cursor back, overwrite character with space, and move cursor back again
+                // move cursor back, overwrite character with space, and move cursor back again
                 printf("\b \b");
                 fflush(stdout);
             }
         } else {
-            // Add character to current_input
+            // add character to current_input
             if (index < BUF_SIZE - 1) {
                 current_input[index++] = ch;
                 current_input[index] = '\0';
 
-                // Echo the character
+                // echo the character
                 putchar(ch);
                 fflush(stdout);
             }
